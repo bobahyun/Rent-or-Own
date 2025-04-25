@@ -1,0 +1,242 @@
+---
+title: "Rent or Own"
+output: html_document
+date: "2023-04-24"
+---
+
+Cleaning and setting up the data :
+
+```{r}
+load("~/DATA 5322/Housing.rdata")
+```
+
+```{r}
+data
+```
+```{r}
+attr(data$SERIAL, 'var_desc')
+attr(data$SERIAL, 'labels')
+```
+
+```{r}
+#Ownership 
+attr(data$OWNERSHP, 'var_desc')
+attr(data$OWNERSHP, 'labels')
+#married variable:
+attr(data$MARST, 'var_desc')
+attr(data$MARST, 'labels')
+
+#families within each unit
+attr(data$ROOMS, 'var_desc')
+attr(data$ROOMS, 'labels')
+
+#Age- will only look at rows where its 18+ 
+attr(data$AGE, 'var_desc')
+attr(data$AGE, 'labels')
+
+#education
+attr(data$EDUC, 'var_desc')
+attr(data$EDUC, 'labels')
+
+#education
+attr(data$NFAMS, 'var_desc')
+attr(data$NFAMS, 'labels')
+
+```
+
+```{r}
+#unique(data$AGE)
+#table(data$AGE)
+```
+
+
+
+
+5 variables binary encoded that will be used throughout the SVM analysis + predicting:
+```{r}
+# Create binary indicator variables for MARST
+data$Married_spouse_present <- ifelse(data$MARST == 1, 1, 0)
+data$Married_spouse_absent <- ifelse(data$MARST == 2, 1, 0)
+data$Separated <- ifelse(data$MARST == 3, 1, 0)
+data$Divorced <- ifelse(data$MARST == 4, 1, 0)
+data$Widowed <- ifelse(data$MARST == 5, 1, 0)
+data$Never_married_single <- ifelse(data$MARST == 6, 1, 0)
+
+# create binary indicator variables for OWNERSHPD
+data$Owned_or_being_bought <- ifelse(data$OWNERSHPD == 10,1,0)
+data$Check_mark_owns <- ifelse(data$OWNERSHPD == 11,1,0)
+data$Owned_free_clear <- ifelse(data$OWNERSHPD == 12,1,0)
+data$Owned_with_mortgage_loan <- ifelse(data$OWNERSHPD == 13,1,0)
+data$Rented <- ifelse(data$OWNERSHPD == 20,1,0)
+data$No_cash_rent <- ifelse(data$OWNERSHPD == 21,1,0)
+data$With_cash_rent <- ifelse(data$OWNERSHPD == 22,1,0)
+
+#create binary indicator variables for NFAMS
+data$vacant_unit <- ifelse(data$NFAMS == 0,1,0)
+data$one_family <- ifelse(data$NFAMS == 1,1,0)
+data$two_family <- ifelse(data$NFAMS == 2,1,0)
+
+#create binary indicator variables for EDUC
+data$edu_noschooling <- ifelse(data$EDUC == 0, 1, 0)
+data$edu_primary <- ifelse(data$EDUC == 1 | data$EDUC == 2, 1, 0)
+data$edu_highschool <- ifelse(data$EDUC >= 3 & data$EDUC <= 6, 1, 0)
+data$edu_college <- ifelse(data$EDUC >= 7, 1, 0)
+
+#age binary indicator variables for AGE:
+#data$children_teenagers <- as.numeric(data$AGE >= 0 & data$AGE <= 17,1,0)
+data$young_adults <- as.numeric(data$AGE >= 18 & data$AGE <= 24,1,0)
+data$prime_working_age_adults <- as.numeric(data$AGE >= 25 & data$AGE <= 44,1,0)
+data$older_working_age_adults <- as.numeric(data$AGE >= 45 & data$AGE <= 64,1,0)
+data$seniors <- as.numeric(data$AGE >= 65,1,0)
+
+```
+
+```{r}
+data
+```
+
+                   
+```{r}
+library(dplyr)
+
+# create ownership column
+data <- data %>% 
+  group_by(SERIAL) %>% 
+  mutate(ownership = if_else(AGE == max(AGE), 1, 0)) %>% 
+  ungroup()
+```
+
+```{r}
+data <- data %>% 
+  group_by(SERIAL) %>% 
+  slice(which.max(AGE))%>%
+  ungroup()
+data
+```
+
+
+Getting rid of all rows where age is below 18:
+```{r}
+library(haven)
+# remove rows where AGE is less than 18
+data <- data[data$AGE >= labelled(18), ]
+data
+```
+```{r}
+#cutting datset entirely in half in order to speed up the process:
+set.seed(123) # for reproducibility
+data_half <- sample_n(data, nrow(data) / 2)
+data_half
+```
+
+
+Creating a subset data using my new variables:
+```{r}
+# Create a subset of the data using only 2 of the variables to predict ownership 
+subset_data <- data_half %>% select(ownership,Married_spouse_present,Married_spouse_absent,Separated,Divorced,Widowed,Never_married_single,Owned_or_being_bought,Check_mark_owns,Owned_free_clear,Owned_with_mortgage_loan,Rented,No_cash_rent,With_cash_rent,vacant_unit,one_family,two_family,edu_noschooling,edu_primary,edu_highschool,edu_college,young_adults,prime_working_age_adults,older_working_age_adults,seniors)
+#remove any NAs
+subset_data <- na.omit(subset_data)
+subset_data$ownership <- as.factor(subset_data$ownership)
+subset_data
+```
+
+LINEAR MODEL:Looking at marital status and number of families 
+
+```{r}
+linear_data <-subset_data %>% select(ownership,Married_spouse_present,Married_spouse_absent,Separated,Divorced,Widowed,Never_married_single)
+linear_data <- linear_data %>%
+  mutate_all(as.factor)
+linear_data
+```
+Create Training DATA:
+```{r}
+#make this example reproducible
+set.seed(1)
+#use 70% of dataset as training set and 30% as test set
+train <- sample(c(TRUE, FALSE), nrow(linear_data), replace=TRUE, prob=c(0.7,0.3))
+L.train  <- linear_data[train, ]
+L.test   <- linear_data[-train, ]
+```
+
+Linear model:
+```{r}
+# Step 4: Perform SVM analysis
+library(e1071)
+model <- svm(ownership ~ ., data = L.train, kernel = "linear",type = "C-classification",cost = .1, scale = FALSE)
+summary(model)
+```
+```{r}
+#training error rates with matrix table 
+ypred <- predict(model, L.train)
+table1 <- table(predict = ypred, truth = L.train$ownership)
+table1
+#test error rates with matrix table 
+ypred <- predict(model, L.test)
+table2 <- table(predict = ypred, truth = L.test$ownership)
+table2
+```
+```{r}
+accuracy_Test <- sum(diag(table1)) / sum(table1)
+print(paste('Accuracy for test', accuracy_Test))
+accuracy_Test2 <- sum(diag(table2)) / sum(table2)
+print(paste('Accuracy for test', accuracy_Test2))
+```
+
+Tuning out the model:
+
+```{r}
+set.seed(1)
+tune.out <- tune(svm, ownership ~ ., data = L.train, kernel = "linear",scale = FALSE, 
+    ranges = list(cost = c(0.01, 0.1, 1, 5, 10)))
+summary(tune.out)
+```
+
+
+```{r}
+bestmod = tune.out$best.model
+#training error
+ypred <- predict(bestmod,L.train)
+table3<- table(predict = ypred, truth = L.train$ownership)
+#test error
+ypred <- predict(bestmod, L.test)
+table4 <- table(predict = ypred, truth = L.test$ownership)
+```
+
+```{r}
+accuracy_Test <- sum(diag(table3)) / sum(table3)
+print(paste('Accuracy for test', accuracy_Test))
+accuracy_Test2 <- sum(diag(table4)) / sum(table4)
+print(paste('Accuracy for test', accuracy_Test2))
+```
+
+
+
+2nd model- Radial:
+
+```{r}
+radial_data <-subset_data %>% select(ownership,edu_noschooling,edu_primary,edu_highschool,edu_college,Married_spouse_present,Married_spouse_absent,Separated,Divorced,Widowed,Never_married_single)
+radial_data 
+```
+training:
+```{r}
+#make this example reproducible
+set.seed(1)
+#use 70% of dataset as training set and 30% as test set
+train <- sample(c(TRUE, FALSE), nrow(radial_data), replace=TRUE, prob=c(0.7,0.3))
+R.train  <- radial_data[train, ]
+R.test   <- radial_data[-train, ]
+```
+
+
+```{r}
+model2 <- svm(ownership ~ .-ownership, data = R.train, kernel = "radial",type = "C-classification",cost = 1,gamma = 1, scale = FALSE)
+summary(model2)
+```
+```{r}
+plot(model2,radial_data,edu_college~Married_spouse_present)
+```
+
+
+
+
+
